@@ -88,15 +88,6 @@ rss:
   # - 正整数：覆盖全局设置，只推送此天数内的文章
   # - 0：禁用此频道的新鲜度过滤，推送所有文章
   feeds:
-    - id: "hacker-news"
-      name: "Hacker News"
-      url: "https://hnrss.org/frontpage"
-
-    - id: "yahoo-finance"
-      name: "雅虎财经"
-      url: "https://finance.yahoo.com/news/rssindex"
-      enabled: false
-
     - id: "lutoushe-new"
       name: "路透社最新报道"
       url: "https://reutersnew.buzzing.cc/feed.xml"
@@ -104,6 +95,14 @@ rss:
     - id: "pengbo-zh-g"
       name: "彭博-股"
       url: "rsshub://telegram/channel/BloombergZh"
+
+    - id: "trump-rss"
+      name: "特朗普-rss"
+      url: "https://trumpstruth.org/feed"
+      max_age_days: 3
+
+
+
 
 
 
@@ -182,8 +181,8 @@ display:
     rss: true # RSS 订阅区域
     standalone: true # 独立展示区（完整热榜/RSS，不受关键词过滤）
   standalone:
-    platforms: [] # 热榜平台 ID 列表（如 ["zhihu", "weibo"]）
-    rss_feeds: ["lutoushe-new","pengbo-zh-g"] # RSS 源 ID 列表（如 ["hacker-news"]）
+    platforms: ["wallstreetcn-hot"] # 热榜平台 ID 列表（如 ["zhihu", "weibo"]）
+    rss_feeds: ["lutoushe-new"] # RSS 源 ID 列表（如 ["hacker-news"]）
     max_items: 20                     # 每个源最多展示条数（0=不限制）
 
 
