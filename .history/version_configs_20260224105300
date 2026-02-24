@@ -1,0 +1,12 @@
+<<<<<<< HEAD
+config.yaml=1.1.0
+frequency_words.txt=1.1.0
+ai_analysis_prompt.txt=1.0.0
+ai_translation_prompt.txt=1.0.0
+=======
+config.yaml=2.0.0
+timeline.yaml=1.0.0
+frequency_words.txt=1.1.0
+ai_analysis_prompt.txt=2.0.0
+ai_translation_prompt.txt=1.1.0
+>>>>>>> 3a1452eb249f10a8e00aa44ab7d77e9530b495c0
