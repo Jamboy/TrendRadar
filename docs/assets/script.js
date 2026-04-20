@@ -3,6 +3,9 @@
  * 特点：确保原始 YAML 的注释和格式 100% 保留
  */
 
+// 编辑器常量
+const EDITOR_LINE_HEIGHT = 19.5 // 编辑器行高（px），用于滚动定位计算
+
 // ==========================================
 // 0. 注释高亮功能
 // ==========================================
@@ -50,7 +53,7 @@ function syncScroll(textareaId, backdropId) {
 }
 
 // ==========================================
-// 12. 支持项目弹窗逻辑
+// 12. 二维码放大弹窗逻辑
 // ==========================================
 
 /**
@@ -430,7 +433,15 @@ function saveConfigToLocalStorage() {
   }
 }
 
-// 保存 frequency_words.txt
+function saveConfigToLocalStorage() {
+  _saveToStorage(
+    currentYaml,
+    STORAGE_KEY_CONFIG,
+    STORAGE_KEY_CONFIG_TIME,
+    'config'
+  )
+}
+
 function saveFrequencyToLocalStorage() {
   try {
     if (currentFrequency && currentFrequency.trim().length > 10) {
@@ -4403,7 +4414,7 @@ function renderPeriodDetails(config, presetName) {
         </div>
         <div class="tl-collapsible-body">
             <div class="text-xs text-gray-500 mb-2">不在任何时间段内时，使用以下配置：</div>
-            ${renderBehaviorToggles(defaults, presetName, 'default')}
+            ${renderBehaviorToggles(defaults, presetName, 'default', defaults)}
         </div>
     </div>`
 
@@ -4718,6 +4729,27 @@ window.onTlSelect = function (presetName, periodKey, field, value) {
   updateTimelineField(presetName, periodKey, field, value)
 }
 
+window.onTlOptionalInput = function (presetName, periodKey, field, rawValue) {
+  const value = (rawValue || '').trim()
+  if (!value) {
+    removeTimelineField(presetName, periodKey, field)
+    return
+  }
+  updateTimelineField(presetName, periodKey, field, value)
+}
+
+window.onTlOptionalSelect = function (presetName, periodKey, field, value) {
+  if (!value) {
+    removeTimelineField(presetName, periodKey, field)
+    return
+  }
+  updateTimelineField(presetName, periodKey, field, value)
+}
+
+window.onTlCustomOverlapPolicy = function (value) {
+  updateTimelineSectionField('custom', 'overlap.policy', value)
+}
+
 /**
  * 周映射下拉变更 → 更新 timeline YAML 中的 week_map.N
  */
@@ -4960,6 +4992,252 @@ function updateTimelineField(presetName, periodKey, field, value) {
   // 延迟重新渲染（避免输入中途刷新）
   clearTimeout(window._tlRenderTimer)
   window._tlRenderTimer = setTimeout(() => syncTimelineToUI(), 300)
+}
+
+function resolveTimelineSection(lines, presetName) {
+  const isCustom = presetName === 'custom'
+  let sectionStart = -1
+  let sectionIndent = 0
+
+  if (isCustom) {
+    for (let i = 0; i < lines.length; i++) {
+      if (/^custom:\s*/.test(lines[i])) {
+        sectionStart = i
+        sectionIndent = 0
+        break
+      }
+    }
+  } else {
+    let inPresets = false
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (/^presets:\s*/.test(line)) {
+        inPresets = true
+        continue
+      }
+      if (inPresets && /^\S/.test(line) && !line.startsWith('#')) {
+        break
+      }
+      if (inPresets) {
+        const m = line.match(/^(\s+)(\S+):\s*/)
+        if (m && m[2] === presetName) {
+          sectionStart = i
+          sectionIndent = m[1].length
+          break
+        }
+      }
+    }
+  }
+
+  if (sectionStart < 0) return null
+
+  let sectionEnd = lines.length
+  for (let i = sectionStart + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    const indent = line.search(/\S/)
+    if (indent <= sectionIndent) {
+      sectionEnd = i
+      break
+    }
+  }
+
+  return { sectionStart, sectionEnd, sectionIndent }
+}
+
+function resolveTimelineTarget(lines, presetName, periodKey) {
+  const section = resolveTimelineSection(lines, presetName)
+  if (!section) return null
+
+  const { sectionStart, sectionEnd, sectionIndent } = section
+  let targetStart = -1
+
+  if (periodKey === 'default') {
+    targetStart = findChildKey(
+      lines,
+      sectionStart,
+      sectionEnd,
+      sectionIndent,
+      'default'
+    )
+  } else {
+    const periodsLine = findChildKey(
+      lines,
+      sectionStart,
+      sectionEnd,
+      sectionIndent,
+      'periods'
+    )
+    if (periodsLine < 0) return null
+    const periodsIndent = lines[periodsLine].search(/\S/)
+    const periodsEnd = findBlockEnd(
+      lines,
+      periodsLine,
+      periodsIndent,
+      sectionEnd
+    )
+    targetStart = findChildKey(
+      lines,
+      periodsLine,
+      periodsEnd,
+      periodsIndent,
+      periodKey
+    )
+  }
+
+  if (targetStart < 0) return null
+
+  const targetIndent = lines[targetStart].search(/\S/)
+  const targetEnd = findBlockEnd(lines, targetStart, targetIndent, sectionEnd)
+
+  return {
+    sectionStart,
+    sectionEnd,
+    sectionIndent,
+    targetStart,
+    targetEnd,
+    targetIndent,
+  }
+}
+
+function applyTimelineEditorChanges(editor, lines) {
+  editor.value = lines.join('\n')
+  currentTimeline = editor.value
+  updateBackdrop('timeline-editor', 'timeline-backdrop')
+  debounceSaveTimeline()
+  clearTimeout(window._tlRenderTimer)
+  window._tlRenderTimer = setTimeout(() => syncTimelineToUI(), 300)
+}
+
+function removeTimelineField(presetName, periodKey, field) {
+  const editor = document.getElementById('timeline-editor')
+  const lines = editor.value.split('\n')
+  const target = resolveTimelineTarget(lines, presetName, periodKey)
+  if (!target) return
+
+  const { targetStart, targetEnd, targetIndent } = target
+  const fieldParts = field.split('.')
+
+  if (fieldParts.length === 1) {
+    const lineIdx = findChildKey(
+      lines,
+      targetStart,
+      targetEnd,
+      targetIndent,
+      fieldParts[0]
+    )
+    if (lineIdx < 0) return
+    const lineIndent = lines[lineIdx].search(/\S/)
+    const lineEnd = findBlockEnd(lines, lineIdx, lineIndent, targetEnd)
+    lines.splice(lineIdx, lineEnd - lineIdx)
+    applyTimelineEditorChanges(editor, lines)
+    return
+  }
+
+  const parentLine = findChildKey(
+    lines,
+    targetStart,
+    targetEnd,
+    targetIndent,
+    fieldParts[0]
+  )
+  if (parentLine < 0) return
+  const parentIndent = lines[parentLine].search(/\S/)
+  const parentEnd = findBlockEnd(lines, parentLine, parentIndent, targetEnd)
+  const childLine = findChildKey(
+    lines,
+    parentLine,
+    parentEnd,
+    parentIndent,
+    fieldParts[1]
+  )
+  if (childLine < 0) return
+
+  const childIndent = lines[childLine].search(/\S/)
+  const childEnd = findBlockEnd(lines, childLine, childIndent, parentEnd)
+  lines.splice(childLine, childEnd - childLine)
+
+  const parentEndAfter = findBlockEnd(
+    lines,
+    parentLine,
+    parentIndent,
+    targetEnd
+  )
+  let hasChild = false
+  for (let i = parentLine + 1; i < parentEndAfter; i++) {
+    const line = lines[i]
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    if (line.search(/\S/) > parentIndent) {
+      hasChild = true
+      break
+    }
+  }
+  if (!hasChild) {
+    lines.splice(parentLine, 1)
+  }
+
+  applyTimelineEditorChanges(editor, lines)
+}
+
+function updateTimelineSectionField(presetName, field, value) {
+  const editor = document.getElementById('timeline-editor')
+  const lines = editor.value.split('\n')
+  const section = resolveTimelineSection(lines, presetName)
+  if (!section) return
+
+  const { sectionStart, sectionEnd, sectionIndent } = section
+  const fieldParts = field.split('.')
+  let lineIdx = -1
+
+  if (fieldParts.length === 1) {
+    lineIdx = findChildKey(
+      lines,
+      sectionStart,
+      sectionEnd,
+      sectionIndent,
+      fieldParts[0]
+    )
+  } else {
+    const parentLine = findChildKey(
+      lines,
+      sectionStart,
+      sectionEnd,
+      sectionIndent,
+      fieldParts[0]
+    )
+    if (parentLine >= 0) {
+      const parentIndent = lines[parentLine].search(/\S/)
+      const parentEnd = findBlockEnd(
+        lines,
+        parentLine,
+        parentIndent,
+        sectionEnd
+      )
+      lineIdx = findChildKey(
+        lines,
+        parentLine,
+        parentEnd,
+        parentIndent,
+        fieldParts[1]
+      )
+    }
+  }
+
+  if (lineIdx < 0) {
+    insertTimelineField(
+      lines,
+      sectionStart,
+      sectionEnd,
+      sectionIndent,
+      field,
+      value,
+      fieldParts
+    )
+  } else {
+    replaceLineValue(lines, lineIdx, value)
+  }
+
+  applyTimelineEditorChanges(editor, lines)
 }
 
 /**
@@ -6350,4 +6628,15 @@ function reorderDayPlanPeriods(presetName, planKey, orderedKeys) {
 
   clearTimeout(window._tlRenderTimer)
   window._tlRenderTimer = setTimeout(() => syncTimelineToUI(), 500)
+}
+
+// ==========================================
+// 支持侧栏 折叠/展开
+// ==========================================
+function toggleSupportSidebar() {
+  const wrap = document.querySelector('.support-sidebar-wrap')
+  const btn = document.getElementById('sidebar-toggle-btn')
+  const isCollapsed = wrap.classList.toggle('collapsed')
+  btn.classList.toggle('is-collapsed', isCollapsed)
+  btn.title = isCollapsed ? '展开侧栏' : '收起侧栏'
 }
